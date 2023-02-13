@@ -9,7 +9,7 @@ from typing import Any, Callable, Collection, Iterable, Optional, Sequence, Type
 
 import numpy as np
 import onnx
-import packaging.version
+import parameterized
 import torch
 from torch.testing._internal import common_device_type, common_methods_invocations
 from torch.testing._internal.opinfo import core as opinfo_core
@@ -19,6 +19,8 @@ import onnxscript
 from onnxscript.function_libs.torch_aten.ops import core as core_ops
 from onnxscript.function_libs.torch_aten.ops import nn as nn_ops
 from onnxscript.function_libs.torch_aten.ops import special as special_ops
+from onnxscript.tests.common import version_utils
+from onnxscript.tests.function_libs.torch_aten import extra_opinfo
 
 T = TypeVar("T")
 
@@ -167,6 +169,9 @@ def duplicate_opinfo(opinfos: list[opinfo_core.OpInfo], name: str, new_names: tu
 # Create a copy of the op_db to modify
 OPS_DB = copy.deepcopy(common_methods_invocations.op_db)
 
+# Append extra op_db into the op database for testing
+OPS_DB.extend(extra_opinfo.OP_DB)
+
 # Modify this section ##########################################################
 
 
@@ -179,11 +184,22 @@ def _cat_input_wrangler(
     return args, kwargs
 
 
+def _embedding_input_wrangler(
+    args: list[Any], kwargs: dict[str, Any]
+) -> tuple[list[Any], dict[str, Any]]:
+    """Remove arguments not present in the aten op signature."""
+    if "max_norm" in kwargs:
+        del kwargs["max_norm"]
+    if "norm_type" in kwargs:
+        del kwargs["norm_type"]
+    return args, kwargs
+
+
 def _full_input_wrangler(
     args: list[Any], kwargs: dict[str, Any]
 ) -> tuple[list[Any], dict[str, Any]]:
     # Remove the self argument
-    if packaging.version.parse(torch.__version__) <= packaging.version.parse("1.13.1"):
+    if version_utils.torch_older_than("2.0"):
         args.pop(0)
     return args, kwargs
 
@@ -200,58 +216,11 @@ def _upsample_input_wrangler(
     return args, kwargs
 
 
-def _logcumsumexp_input_wrangler(
-    args: list[Any], kwargs: dict[str, Any]
-) -> tuple[list[Any], dict[str, Any]]:
-    kwargs["keepdim"] = args.pop()
-    return args, kwargs
-
-
-def _log_softmax_input_wrangler(
-    args: list[Any], kwargs: dict[str, Any]
-) -> tuple[list[Any], dict[str, Any]]:
-    kwargs["dim"] = args.pop()
-    return args, kwargs
-
-
-def _softmax_input_wrangler(
-    args: list[Any], kwargs: dict[str, Any]
-) -> tuple[list[Any], dict[str, Any]]:
-    kwargs["dim"] = args.pop()
-    return args, kwargs
-
-
 def _sum_input_wrangler(
     args: list[Any], kwargs: dict[str, Any]
 ) -> tuple[list[Any], dict[str, Any]]:
     if kwargs.get("dim") is not None:
-        dim_value = kwargs.pop("dim")  # move 'dim' from kwargs into args
-        if isinstance(dim_value, tuple):
-            # tuple input cannot be handeled in os function, convert to array
-            dim_value = np.array(dim_value, dtype=np.int64)
-        args.append(dim_value)
-    return args, kwargs
-
-
-def _split_input_wrangler(
-    args: list[Any], kwargs: dict[str, Any]
-) -> tuple[list[Any], dict[str, Any]]:
-    if len(args) >= 3:
-        kwargs["dim"] = args.pop(2)
-    return args, kwargs
-
-
-def _topk_input_wrangler(
-    args: list[Any], kwargs: dict[str, Any]
-) -> tuple[list[Any], dict[str, Any]]:
-    # TODO(#305): Sole purpose is to workaround attributes must be in kwargs in onnxscript.
-
-    if len(args) >= 3:
-        kwargs["dim"] = args.pop(2)
-    if len(args) >= 3:
-        kwargs["largest"] = args.pop(2)
-    if len(args) >= 3:
-        kwargs["sorted"] = args.pop(2)
+        kwargs["dim"] = np.array(kwargs["dim"], dtype=np.int64)
     return args, kwargs
 
 
@@ -282,13 +251,12 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "acosh": core_ops.aten_acosh,
     "add": core_ops.aten_add,
     "addmm": core_ops.aten_addmm,
-    "arange_start_step": core_ops.aten_arange_start_step,
-    "arange_start": core_ops.aten_arange_start,
-    "arange": core_ops.aten_arange,
+    # "alias": core_ops.aten_alias,  # alias is not in OP-TEST-DB
     "asin": core_ops.aten_asin,
     "asinh": core_ops.aten_asinh,
     "atan": core_ops.aten_atan,
     "atanh": core_ops.aten_atanh,
+    "baddbmm": core_ops.aten_baddbmm,
     "bmm": core_ops.aten_bmm,
     "broadcast_to": core_ops.aten_broadcast_to,
     "cat": (core_ops.aten_cat, _cat_input_wrangler),
@@ -302,7 +270,6 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "div": core_ops.aten_div,
     "dot": core_ops.aten_dot,
     "empty": core_ops.aten_empty,
-    "empty_like": core_ops.aten_empty_like,
     "eq": core_ops.aten_eq,
     "equal": core_ops.aten_equal,
     "exp": core_ops.aten_exp,
@@ -319,14 +286,15 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "le": core_ops.aten_le,
     "log10": core_ops.aten_log10,
     "log1p": core_ops.aten_log1p,
-    "log_softmax": (special_ops.aten_special_log_softmax, _log_softmax_input_wrangler),
+    "log_softmax": special_ops.aten_special_log_softmax,
     "log2": core_ops.aten_log2,
     "logaddexp": core_ops.aten_logaddexp,
     "logaddexp2": core_ops.aten_logaddexp2,
     "logcumsumexp": core_ops.aten_logcumsumexp,
     "logdet": core_ops.aten_logdet,
-    "logsumexp": (core_ops.aten_logsumexp, _logcumsumexp_input_wrangler),
+    "logsumexp": core_ops.aten_logsumexp,
     "lt": core_ops.aten_lt,
+    "masked_fill": core_ops.aten_masked_fill,
     "matmul": core_ops.aten_matmul,
     "maximum": core_ops.aten_maximum,
     "minimum": core_ops.aten_minimum,
@@ -340,8 +308,7 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "nn.functional.adaptive_avg_pool3d": nn_ops.aten_adaptive_avg_pool3d,
     "nn.functional.celu": nn_ops.aten_celu,
     "nn.functional.elu": nn_ops.aten_elu,
-    "nn.functional.embedding": core_ops.aten_embedding,
-    "nn.functional.gelu": nn_ops.aten_gelu,
+    "nn.functional.embedding": (core_ops.aten_embedding, _embedding_input_wrangler),
     "nn.functional.leaky_relu": nn_ops.aten_leaky_relu,
     "nn.functional.logsigmoid": nn_ops.aten_log_sigmoid,
     "nn.functional.relu": nn_ops.aten_relu,
@@ -352,7 +319,6 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
         _upsample_input_wrangler,
     ),
     "nonzero": core_ops.aten_nonzero,
-    "ones_like": core_ops.aten_ones_like,
     "ones": core_ops.aten_ones,
     "permute": core_ops.aten_permute,
     "pow": core_ops.aten_pow,
@@ -363,27 +329,24 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "round": core_ops.aten_round,
     "rsqrt": core_ops.aten_rsqrt,
     "rsub": core_ops.aten_rsub,
+    "select": core_ops.aten_select,
     "sigmoid": core_ops.aten_sigmoid,
     "sign": core_ops.aten_sign,
     "sin": core_ops.aten_sin,
     "sinh": core_ops.aten_sinh,
-    "softmax": (special_ops.aten_special_softmax, _softmax_input_wrangler),
-    "split": (core_ops.aten_split, _split_input_wrangler),
+    "softmax": special_ops.aten_special_softmax,
+    "split": core_ops.aten_split,
     "sqrt": core_ops.aten_sqrt,
     "sub": core_ops.aten_sub,
     "t": core_ops.aten_t,
     "tan": core_ops.aten_tan,
     "tanh": core_ops.aten_tanh,
-    "topk": (
-        core_ops.aten_topk,
-        _topk_input_wrangler,
-    ),
+    "topk": core_ops.aten_topk,
     "unsqueeze": core_ops.aten_unsqueeze,
     "view": core_ops.aten_view,
     "where": (core_ops.aten_where, _where_input_wrangler),
     "xlogy": special_ops.aten_special_xlogy,
     "zeros": core_ops.aten_zeros,
-    "zeros_like": core_ops.aten_zeros_like,
 }
 
 
@@ -393,16 +356,27 @@ OPINFO_FUNCTION_MAPPING_TRACE_ONLY: dict[
 ] = {
     "amax": core_ops.aten_amax,
     "amin": core_ops.aten_amin,
+    "arange_start_step": core_ops.aten_arange_start_step,
+    "arange_start": core_ops.aten_arange_start,
+    "arange": core_ops.aten_arange,
     "argmax": core_ops.aten_argmax,
     "argmin": core_ops.aten_argmin,
     "clamp": core_ops.aten_clamp,
+    "cumsum": core_ops.aten_cumsum,
+    "convolution": core_ops.aten_convolution,
+    "empty_like": core_ops.aten_empty_like,
     "index_select": core_ops.aten_index_select,
     "native_layer_norm": core_ops.aten_native_layer_norm,
+    "nn.functional.conv1d": core_ops.aten_conv1d,
     "nn.functional.conv2d": core_ops.aten_conv2d,
+    "nn.functional.conv3d": core_ops.aten_conv3d,
+    "nn.functional.gelu": nn_ops.aten_gelu,
     "nn.functional.linear": nn_ops.aten_linear,
+    "ones_like": core_ops.aten_ones_like,
     "slice": core_ops.aten_slice,
     "sum": (core_ops.aten_sum_dim_IntList, _sum_input_wrangler),
     "transpose": core_ops.aten_transpose,
+    "zeros_like": core_ops.aten_zeros_like,
 }
 
 OPINFO_FUNCTION_MAPPING: dict[
@@ -488,6 +462,11 @@ SKIP_SUBTESTS: tuple[DecorateMeta, ...] = (
         "nn.functional.adaptive_avg_pool3d",
         matcher=lambda sample: sample.args[0] != (1, 1, 1),
         reason="only global pooling is supported; only batched inputs are supported",
+    ),
+    skip(
+        "nn.functional.conv1d",
+        matcher=lambda sample: isinstance(sample.kwargs.get("padding"), str),
+        reason="String padding is not accepted by aten::conv1d",
     ),
     skip(
         "nn.functional.conv2d",
@@ -611,6 +590,47 @@ def _should_skip_test_sample(op_name: str, sample) -> Optional[str]:
     return None
 
 
+class TestFunctionValidity(unittest.TestCase):
+    def test_all_script_functions_are_onnx_functions(self):
+        for func_with_wrangler in OPINFO_FUNCTION_MAPPING_SCRIPTED.values():
+            if isinstance(func_with_wrangler, tuple):
+                func = func_with_wrangler[0]
+            else:
+                func = func_with_wrangler
+            if not isinstance(func, onnxscript.OnnxFunction):
+                raise AssertionError(
+                    f"'{func}' is not an OnnxFunction. Was it decorated with '@torch_op'? "
+                    "If the function is trace_only, please move it to the "
+                    "'OPINFO_FUNCTION_MAPPING_TRACE_ONLY' dict."
+                )
+
+    def test_all_trace_only_functions_are_not_onnx_functions(self):
+        for func_with_wrangler in OPINFO_FUNCTION_MAPPING_TRACE_ONLY.values():
+            if isinstance(func_with_wrangler, tuple):
+                func = func_with_wrangler[0]
+            else:
+                func = func_with_wrangler
+            if isinstance(func, onnxscript.OnnxFunction):
+                raise AssertionError(
+                    f"'{func.name}' is an OnnxFunction. "
+                    "If the function is not trace_only, please move it to the "
+                    "'OPINFO_FUNCTION_MAPPING_SCRIPTED' dict."
+                )
+
+    @parameterized.parameterized.expand(list(OPINFO_FUNCTION_MAPPING_SCRIPTED.items()))
+    @unittest.skipIf(
+        version_utils.onnx_older_than("1.14"),
+        "Function checker is not available before ONNX 1.14",
+    )
+    def test_script_function_passes_checker(self, _, func_with_wrangler):
+        if isinstance(func_with_wrangler, tuple):
+            func = func_with_wrangler[0]
+        else:
+            func = func_with_wrangler
+        function_proto = func.to_function_proto()
+        onnx.checker.check_function(function_proto)  # type: ignore[attr-defined]
+
+
 class TestOutputConsistency(unittest.TestCase):
     """Test output consistency between exported ONNX models and PyTorch eager mode.
 
@@ -620,14 +640,6 @@ class TestOutputConsistency(unittest.TestCase):
     def setUp(self) -> None:
         torch.manual_seed(42)
         np.random.seed(42)
-
-    def test_all_script_functions_are_onnx_functions(self):
-        for func_with_wrangler in OPINFO_FUNCTION_MAPPING_SCRIPTED.values():
-            if isinstance(func_with_wrangler, tuple):
-                func = func_with_wrangler[0]
-            else:
-                func = func_with_wrangler
-            self.assertIsInstance(func, onnxscript.OnnxFunction)
 
     @common_device_type.ops(  # type: ignore[misc]
         [info for info in OPS_DB if info.name in TESTED_OPS],
@@ -707,10 +719,10 @@ class TestOutputConsistency(unittest.TestCase):
 
                     # Use torch.testing as opposed to np.testing to ensure dtypes and shapes match
                     torch.testing.assert_close(
-                        torch.tensor(function_output),
-                        torch_output
+                        torch.tensor(function_output).cpu(),
+                        torch_output.cpu()
                         if isinstance(torch_output, torch.Tensor)
-                        else torch.tensor(torch_output),
+                        else torch.tensor(torch_output).cpu(),
                         rtol=rtol,
                         atol=atol,
                     )
