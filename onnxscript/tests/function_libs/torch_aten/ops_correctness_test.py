@@ -212,7 +212,7 @@ def _upsample_input_wrangler(
         kwargs["scales_w"] = kwargs["scale_factor"]
         del kwargs["scale_factor"]
     if "size" in kwargs:
-        kwargs["size"] = np.array(kwargs["size"])
+        kwargs["size"] = np.array(kwargs["size"], dtype=np.int64)
     return args, kwargs
 
 
@@ -264,18 +264,21 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "clamp_max": core_ops.aten_clamp_max,
     "clamp_min": core_ops.aten_clamp_min,
     "clone": core_ops.aten_clone,
+    # "copy": core_ops.aten_copy,  # copy is not in OPS_DB
     "cos": core_ops.aten_cos,
     "cosh": core_ops.aten_cosh,
     # "detach": core_ops.aten_detach,  # detach is not in OP-TEST-DB
     "div": core_ops.aten_div,
     "dot": core_ops.aten_dot,
     "empty": core_ops.aten_empty,
+    # "empty_strided": core_ops.aten_empty_strided,  # empty_strided is not in OPS_DB
     "eq": core_ops.aten_eq,
     "equal": core_ops.aten_equal,
     "exp": core_ops.aten_exp,
     "exp2": core_ops.aten_exp2,
     "expand": core_ops.aten_expand,
     "erf": core_ops.aten_erf,
+    "fill": core_ops.aten_fill,
     "fmod": core_ops.aten_fmod,
     "full": (core_ops.aten_full, _full_input_wrangler),
     "full_like": core_ops.aten_full_like,
@@ -300,8 +303,12 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "minimum": core_ops.aten_minimum,
     "mm": core_ops.aten_mm,
     "mul": core_ops.aten_mul,
+    "narrow": core_ops.aten_narrow,
+    # "native_dropout": core_ops.aten_native_dropout,  # native_dropout is not in OPS_DB
     "ne": core_ops.aten_ne,
     "neg": core_ops.aten_neg,
+    "new_empty": core_ops.aten_new_empty,
+    "new_empty_strided": core_ops.aten_new_empty_strided,
     "new_full": core_ops.aten_new_full,
     "nn.functional.adaptive_avg_pool1d": nn_ops.aten_adaptive_avg_pool1d,
     "nn.functional.adaptive_avg_pool2d": nn_ops.aten_adaptive_avg_pool2d,
@@ -314,11 +321,8 @@ OPINFO_FUNCTION_MAPPING_SCRIPTED: dict[
     "nn.functional.relu": nn_ops.aten_relu,
     "nn.functional.relu6": nn_ops.aten_relu6,
     "nn.functional.selu": core_ops.aten_selu,
-    "nn.functional.upsample_nearest2d": (
-        nn_ops.aten_upsample_nearest2d,
-        _upsample_input_wrangler,
-    ),
     "nonzero": core_ops.aten_nonzero,
+    "normal": core_ops.aten_normal,
     "ones": core_ops.aten_ones,
     "permute": core_ops.aten_permute,
     "pow": core_ops.aten_pow,
@@ -372,6 +376,10 @@ OPINFO_FUNCTION_MAPPING_TRACE_ONLY: dict[
     "nn.functional.conv3d": core_ops.aten_conv3d,
     "nn.functional.gelu": nn_ops.aten_gelu,
     "nn.functional.linear": nn_ops.aten_linear,
+    "nn.functional.upsample_nearest2d": (
+        nn_ops.aten_upsample_nearest2d,
+        _upsample_input_wrangler,
+    ),
     "ones_like": core_ops.aten_ones_like,
     "slice": core_ops.aten_slice,
     "sum": (core_ops.aten_sum_dim_IntList, _sum_input_wrangler),
@@ -392,14 +400,25 @@ OPINFO_FUNCTION_MAPPING: dict[
 TESTED_OPS = frozenset(OPINFO_FUNCTION_MAPPING)
 
 EXPECTED_SKIPS_OR_FAILS = (
+    *(
+        # ONNX Runtime 1.13 skips
+        (
+            xfail("logsumexp", reason="ONNX Runtime 1.13 does not support ReduceLogSumExp-18"),
+            xfail(
+                "nn.functional.upsample_nearest2d",
+                reason="ONNX Runtime 1.13 does support opset18",
+            ),
+        )
+        if version_utils.onnxruntime_older_than("1.14")
+        else ()
+    ),
     skip("empty", reason="Using zeros to simulate empty"),
     skip("empty_like", reason="Using zeros_like to simulate empty_like"),
     xfail("logcumsumexp", reason="naive implementation not numerically stable"),
-    xfail("logsumexp", reason="ONNX Runtime 1.13 does not support ReduceLogSumExp-18"),
-    xfail(
-        "nn.functional.upsample_nearest2d",
-        reason="enable when ONNX Runtime does support opset18",
-    ),
+    skip("new_empty", reason="Using zeros to simulate empty"),
+    skip("new_empty_strided", reason="Using zeros to simulate empty"),
+    xfail("normal", reason="Random numbers are not close"),
+    xfail("normal", variant_name="number_mean", reason="Random numbers are not close"),
     xfail("round", variant_name="decimals_0", reason="The op does not support decimals"),
     xfail("round", variant_name="decimals_3", reason="The op does not support decimals"),
     xfail("round", variant_name="decimals_neg_3", reason="The op does not support decimals"),
@@ -446,6 +465,11 @@ SKIP_SUBTESTS: tuple[DecorateMeta, ...] = (
         "nonzero",
         matcher=lambda sample: sample.kwargs.get("as_tuple") is not None,
         reason="as_tuple=True is not supported",
+    ),
+    skip(
+        "normal",
+        matcher=lambda sample: len(sample.args) > 0 and not isinstance(sample.args[0], float),
+        reason="ORT only accept float type for args[0] 'mean'",
     ),
     skip(
         "nn.functional.adaptive_avg_pool1d",

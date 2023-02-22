@@ -14,7 +14,7 @@ import numpy as np
 import onnx
 import onnx.defs
 import onnx.helper
-from typing_extensions import TypeAlias
+from typing_extensions import Protocol, TypeAlias, runtime_checkable
 
 from onnxscript import autocast, irbuilder, onnx_opset, tensor, utils, values
 from onnxscript._internal import param_manipulation
@@ -117,7 +117,40 @@ def _unwrap_tensors_in_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     return new_kwargs
 
 
-class Evaluator(abc.ABC):
+@runtime_checkable
+class Evaluator(Protocol):
+    """Protocol for evaluating ONNX ops."""
+
+    def eval(
+        self,
+        schema: onnx.defs.OpSchema,
+        inputs: Sequence[ExtendedModeValue],
+        attributes: Mapping[str, Any],
+    ):
+        """Evaluates an ONNX op.
+
+        Args:
+            schema: The OpSchema of the operator to evaluate.
+            inputs: The ONNX inputs to the op.
+            attributes: The ONNX attributes to the op.
+        """
+
+    def eval_function(
+        self,
+        function: values.OnnxFunction,
+        args: Sequence[ExtendedModeValue],
+        kwargs: Mapping[str, ExtendedModeValue],
+    ):
+        """Evaluates an OnnxFunction.
+
+        Args:
+            function: The OnnxFunction to evaluate.
+            args: The positional arguments to the function.
+            kwargs: The keyword arguments to the function.
+        """
+
+
+class BaseEvaluator(Evaluator, abc.ABC):
     """Base class for evaluation of ONNX ops.
 
     The execution of onnxscript functions in eager-mode is dispatched to an Evaluator
@@ -125,6 +158,18 @@ class Evaluator(abc.ABC):
     The evaluator is expected to transform the input/output/attribute representation
     supported by onnxscript to those expected by a particular backend.
     """
+
+    def __init__(self, ignore_unknown_function_kwargs: bool = False):
+        """Initializes a BaseEvaluator.
+
+        Args:
+            ignore_unknown_function_kwargs: Whether to ignore unknown keyword arguments
+                when evaluating an OnnxFunction. This is useful when using the
+                evaluator to validate operators programmatically, where
+                additional keyword arguments that is not part of the signature
+                may be provided to the function.
+        """
+        self._ignore_unknown_function_kwargs = ignore_unknown_function_kwargs
 
     def eval(
         self,
@@ -229,7 +274,11 @@ class Evaluator(abc.ABC):
         # Split happens in the evaluator instead of the OnnxFunction __call__ method
         # so that evaluators can control behaviors like whether to fill in default values for attributes.
         inputs, attributes = param_manipulation.separate_input_attributes_from_arguments(
-            param_schemas, args, kwargs, fill_defaults=False, allow_extra_kwargs=False
+            param_schemas,
+            args,
+            kwargs,
+            fill_defaults=False,
+            allow_extra_kwargs=self._ignore_unknown_function_kwargs,
         )
         adapted_inputs, has_array = _adapt_to_eager_mode(inputs)
         result = function.function(*adapted_inputs, **attributes)
@@ -400,7 +449,7 @@ def _schema_id(schema: onnx.defs.OpSchema) -> tuple[str, str, int]:
     return schema.name, schema.domain, schema.since_version
 
 
-class ORTEvaluator(Evaluator):
+class ORTEvaluator(BaseEvaluator):
     """Evaluates ONNX ops using ONNX Runtime."""
 
     def _eval(self, schema, inputs, attributes, closure):
