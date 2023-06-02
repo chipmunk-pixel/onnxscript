@@ -110,8 +110,8 @@ def tag_arguments_with_param_schemas(
     if extra_kwargs and not allow_extra_kwargs:
         raise TypeError(f"Unexpected keyword arguments '{extra_kwargs}'")
 
-    tagged_args = []
-    tagged_kwargs = {}
+    tagged_args: list[tuple[Any, values.ParamSchema]] = []
+    tagged_kwargs: dict[str, tuple[Any, values.ParamSchema]] = {}
 
     for i, param in enumerate(param_schemas):
         if param.is_variadic_input:
