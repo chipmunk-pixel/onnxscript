@@ -967,6 +967,12 @@ SKIP_XFAIL_SUBTESTS: tuple[ops_test_common.DecorateMeta, ...] = (
         matcher=lambda sample: isinstance(sample.kwargs.get("padding"), str),
         reason="String padding is not accepted by aten::conv2d",
     ),
+    xfail(
+        "nn.functional.cross_entropy",
+        matcher=lambda sample: len(sample.args) < 1
+        or (isinstance(sample.args[0], torch.Tensor) and sample.args[0].dtype != torch.int64),
+        reason="ONNX SoftmaxCrossEntropyLoss op only accept argument[target] as int type",
+    ),
     skip(
         "nn.functional.dropout",
         matcher=lambda sample: len(sample.kwargs) == 0 or sample.kwargs.get("p", 0.0) > 0.0,

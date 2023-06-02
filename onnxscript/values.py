@@ -11,7 +11,7 @@ import types
 import typing
 from enum import IntFlag
 from typing import _GenericAlias  # type: ignore[attr-defined]
-from typing import Any, Optional, Protocol, Sequence
+from typing import Any, Optional, Protocol, Sequence, Union
 
 import onnx
 import onnx.defs
@@ -195,8 +195,18 @@ def param_schemas_from_op_schema(
     return tuple(schemas)
 
 
+def _is_optional(typeinfo) -> bool:
+    if typing.get_origin(typeinfo) is Union and type(None) in typing.get_args(typeinfo):
+        # Python < 3.10
+        return True
+    if typing.get_origin(typeinfo) is Optional:
+        # Python >= 3.10
+        return True
+    return False
+
+
 def _param_schema_from_function_ir_input(input: irbuilder.IRVar):
-    if isinstance(input.typeinfo, onnx.TypeProto.Optional):
+    if _is_optional(input.typeinfo):
         required = False
     else:
         required = True
