@@ -231,9 +231,11 @@ def param_schemas_from_function_ir(
     """Get the parameter schemas from a FunctionIR."""
     schemas = []
 
-    # OnnxFunction supports intersected inputs and attributes.
-    # When order metadata is available, preserve the original order of inputs and
-    # attributes
+    # OnnxFunction supports interleaving inputs and attributes as arguments.
+    # Preserve the original order for param_schemas.
+    # NOTE the interleave ordering is only preserved at OnnxFunction/FunctionIR level.
+    # ONNX OpSchema and FunctionProto does not support interleaving inputs and attributes.
+    # This is by design. See more at https://github.com/microsoft/onnxscript/issues/771.
     for arg in function_ir.ordered_inputs_and_attrs:
         if isinstance(arg, irbuilder.IRVar):
             # input

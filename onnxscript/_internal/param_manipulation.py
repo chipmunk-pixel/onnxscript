@@ -67,8 +67,6 @@ def separate_input_attributes_from_arguments(
             # User did not provide the attribute
             if fill_defaults:
                 onnx_attributes[param.name] = param.default
-            else:
-                continue
         elif param.required:
             raise TypeError(f"Required input '{param}' was not provided")
 
@@ -127,8 +125,6 @@ def tag_arguments_with_param_schemas(
             # User did not provide the input/attribute
             if fill_defaults:
                 tagged_kwargs[param.name] = (param.default, param)
-            else:
-                continue
         elif param.required:
             raise TypeError(f"Required input/attribute '{param}' was not provided")
 
